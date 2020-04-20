@@ -7,11 +7,13 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.StrictMode
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
@@ -29,13 +31,18 @@ import java.net.InetAddress
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.*
+import kotlin.collections.ArrayList
 import kotlin.math.abs
 import kotlin.math.sqrt
 
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
 
+    private var mail: Boolean = false
     private lateinit var lista: ArrayList<Float>
+
+    private lateinit var dati_csv: ArrayList<String>
+
     private lateinit var mConstraintLayout: ConstraintLayout
     private lateinit var socket: DatagramSocket
     private var formatter: DateTimeFormatter? = null
@@ -81,11 +88,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         // inizializza la lista dove sono contenute le misure
         // serve al calcolo della media e della std
         lista = ArrayList<Float>()
-        //lista?.add(0.0f)
+        dati_csv = ArrayList<String>()
 
 
 
@@ -103,7 +111,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             if (isChecked)
                 rete = true else rete=false
         }
+        toggleButton.isEnabled = false
 
+        val check2 = findViewById<CheckBox>(R.id.checkBox2)
+        check2?.setOnCheckedChangeListener { buttonView, isChecked ->
+            if (isChecked)
+                mail = true else rete=false
+        }
+        
         mConstraintLayout = findViewById<ConstraintLayout>(R.id.layout)
 
 
@@ -173,6 +188,23 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 fileOutPutStream.close()
                 Toast.makeText(this@MainActivity, "File saved : " + formatted+".csv" , Toast.LENGTH_LONG).show()
                 mConstraintLayout.setBackgroundColor(Color.WHITE)
+                toggleButton.isEnabled = false
+
+
+                if (mail) {
+                    // invio dati per email
+                    val intent = Intent(Intent.ACTION_SEND)
+                    intent.type = "text/html"
+                    //intent.putExtra(Intent.EXTRA_EMAIL, "lucainnoc@gmail.com")
+                    intent.putExtra(
+                        Intent.EXTRA_SUBJECT,
+                        "Data station nr" + nr_stazione.toString()
+                    )
+                    intent.putExtra(Intent.EXTRA_TEXT, dati_csv.toString())
+                    startActivity(Intent.createChooser(intent, "Send Email"))
+                }
+
+
 
             }
 
@@ -187,17 +219,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
             override fun onSuccess(ticksDelta: Long, responseTimeMs: Long) {
                 Log.d("Kronos", "Clock sync succeed. Time delta: $ticksDelta")
-                toggleButton.isEnabled = true
+
                 testo.setText("Clock sync succeed.")
 
                 delta = ticksDelta
-                toggleButton.visibility = View.VISIBLE
+                if (testo.text == "Clock sync succeed.") toggleButton.isEnabled = true
 
             }
 
             override fun onError(host: String, throwable: Throwable) {
                 Log.e("Kronos", "Clock sync failed ($host)", throwable)
                 testo.setText("Clock sync failed ($host)")
+
 
             }
         }
@@ -210,11 +243,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
+        kronosClock.syncInBackground()
         mSensorManager!!.registerListener(this,mAccelerometer, SensorManager.SENSOR_DELAY_GAME)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        kronosClock.shutdown()
         mSensorManager.unregisterListener(this, mAccelerometer)
     }
 
@@ -248,19 +283,22 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     tempo = kronosClock.getCurrentTimeMs()
                     var salva: String = nr_stazione.toString()+";"+tempo.toString()+";"+ z.toString()+"\n"
 
+                    dati_csv.add(salva)
+
                     fileOutPutStream.write(salva.toByteArray())
                     lista.add(z)
 
                     var media = lista.median()
                     var std_dev = lista.standardDeviation()
 
+                    // il controllo della media avviene solo quando ci sono abbastanza dati
                     if (lista.size > 200) {
-                        if (abs(z) > (abs(media) + (1.0 * std_dev))) {
+                        if (abs(z) > (abs(media) + (5.0 * std_dev))) {
                             mConstraintLayout.setBackgroundColor(Color.RED)
                         }
                     }
 
-                    Log.d("Media",media.toString()+";"+std_dev.toString())
+                    //Log.d("Media",media.toString()+";"+std_dev.toString()+";"+z.toString())
 
                     if (rete) {
                         val byte = salva.toByteArray();
